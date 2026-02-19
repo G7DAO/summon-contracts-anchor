@@ -94,6 +94,10 @@ pub enum SummonRewardsError {
     #[msg("NFT is not owned by treasury")]
     NftNotInTreasury,
 
+    // ─── Supply Increase ─────────────────────────────────────────────
+    #[msg("Cannot increase supply for reward tokens with NFT rewards")]
+    NftSupplyIncreaseNotSupported,
+
     // ─── Arithmetic ──────────────────────────────────────────────────
     #[msg("Arithmetic overflow")]
     ArithmeticOverflow,

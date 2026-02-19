@@ -1115,6 +1115,7 @@ mod treasury_whitelist {
 mod reward_token_creation {
     use super::*;
 
+    #[allow(clippy::too_many_arguments)]
     fn build_create_reward_token_ix(
         manager: &Pubkey,
         config: &Pubkey,
@@ -2049,6 +2050,7 @@ mod signature_minting {
     }
 
     /// Build a mint_with_signature instruction.
+    #[allow(clippy::too_many_arguments)]
     fn build_mint_with_signature_ix(
         user: &Pubkey,
         config: &Pubkey,
@@ -2450,18 +2452,16 @@ mod edge_cases {
     #[test]
     fn test_max_token_id_value() {
         let (config, _) = find_config_pda();
-        let (pda, bump) = find_reward_token_pda(&config, u64::MAX);
+        let (pda, _bump) = find_reward_token_pda(&config, u64::MAX);
         assert_ne!(pda, Pubkey::default());
-        assert!(bump <= 255);
     }
 
     #[test]
     fn test_max_nonce_value() {
         let (config, _) = find_config_pda();
         let user = Pubkey::new_unique();
-        let (pda, bump) = find_nonce_pda(&config, &user, u64::MAX);
+        let (pda, _bump) = find_nonce_pda(&config, &user, u64::MAX);
         assert_ne!(pda, Pubkey::default());
-        assert!(bump <= 255);
     }
 
     #[test]
@@ -3125,7 +3125,30 @@ mod remove_from_whitelist {
         // First whitelist the token (type=1 for SplToken)
         whitelist_token(&mut env, &mock_mint, 1);
 
-        // Now remove it
+        // Create reservation PDA with reserved_amount = 0 (required for SPL token removal)
+        let (reservation_pda, reservation_bump) =
+            find_token_reservation_pda(&env.config_pda, &mock_mint);
+        let reservation_disc = {
+            let hash_result = hash::hash(b"account:TokenReservation");
+            let mut d = [0u8; 8];
+            d.copy_from_slice(&hash_result.to_bytes()[..8]);
+            d
+        };
+        let mut reservation_data = Vec::new();
+        reservation_data.extend_from_slice(&reservation_disc);
+        reservation_data.extend_from_slice(&mock_mint.to_bytes()); // mint
+        reservation_data.extend_from_slice(&0u64.to_le_bytes()); // reserved_amount = 0
+        reservation_data.push(reservation_bump); // bump
+        let rent = env.svm.minimum_balance_for_rent_exemption(reservation_data.len());
+        env.svm.set_account(reservation_pda, solana_sdk::account::Account {
+            lamports: rent,
+            data: reservation_data,
+            owner: program_id(),
+            executable: false,
+            rent_epoch: 0,
+        }).unwrap();
+
+        // Now remove it (with reservation PDA as remaining_account)
         let disc = anchor_discriminator("remove_token_from_whitelist");
         let mut data = Vec::new();
         data.extend_from_slice(&disc);
@@ -3134,6 +3157,8 @@ mod remove_from_whitelist {
             AccountMeta::new_readonly(env.manager.pubkey(), true),
             AccountMeta::new_readonly(env.config_pda, false),
             AccountMeta::new(env.token_whitelist_pda, false),
+            // Reservation PDA as remaining_account
+            AccountMeta::new_readonly(reservation_pda, false),
         ];
         let ix = Instruction::new_with_bytes(program_id(), &data, accounts);
         let blockhash = env.svm.latest_blockhash();
@@ -3211,7 +3236,30 @@ mod remove_from_whitelist {
         // Whitelist
         whitelist_token(&mut env, &mock_mint, 1);
 
-        // Remove
+        // Create reservation PDA with reserved_amount = 0 (required for SPL token removal)
+        let (reservation_pda, reservation_bump) =
+            find_token_reservation_pda(&env.config_pda, &mock_mint);
+        let reservation_disc = {
+            let hash_result = hash::hash(b"account:TokenReservation");
+            let mut d = [0u8; 8];
+            d.copy_from_slice(&hash_result.to_bytes()[..8]);
+            d
+        };
+        let mut reservation_data = Vec::new();
+        reservation_data.extend_from_slice(&reservation_disc);
+        reservation_data.extend_from_slice(&mock_mint.to_bytes()); // mint
+        reservation_data.extend_from_slice(&0u64.to_le_bytes()); // reserved_amount = 0
+        reservation_data.push(reservation_bump); // bump
+        let rent = env.svm.minimum_balance_for_rent_exemption(reservation_data.len());
+        env.svm.set_account(reservation_pda, solana_sdk::account::Account {
+            lamports: rent,
+            data: reservation_data,
+            owner: program_id(),
+            executable: false,
+            rent_epoch: 0,
+        }).unwrap();
+
+        // Remove (with reservation PDA as remaining_account)
         let disc = anchor_discriminator("remove_token_from_whitelist");
         let mut data = Vec::new();
         data.extend_from_slice(&disc);
@@ -3220,6 +3268,7 @@ mod remove_from_whitelist {
             AccountMeta::new_readonly(env.manager.pubkey(), true),
             AccountMeta::new_readonly(env.config_pda, false),
             AccountMeta::new(env.token_whitelist_pda, false),
+            AccountMeta::new_readonly(reservation_pda, false),
         ];
         let ix = Instruction::new_with_bytes(program_id(), &data, accounts);
         let blockhash = env.svm.latest_blockhash();
@@ -4185,7 +4234,7 @@ mod claim_funded_treasury {
         let mint_accounts = vec![
             AccountMeta::new(env.minter.pubkey(), true),
             AccountMeta::new_readonly(env.config_pda, false),
-            AccountMeta::new(reward_token_pda, false),
+            AccountMeta::new_readonly(reward_token_pda, false),
             AccountMeta::new_readonly(system_program::ID, false),
         ];
         let ix = Instruction::new_with_bytes(program_id(), &mint_data, mint_accounts);
@@ -4208,46 +4257,49 @@ mod claim_funded_treasury {
             ..treasury_account
         }).unwrap();
 
-        // User claims the reward
-        let user = Keypair::new();
-        env.svm.airdrop(&user.pubkey(), 10_000_000_000).unwrap();
+        // Use admin_claim_reward (manager-initiated, no burn required)
+        // claim_reward now requires a Token-2022 access token burn, but
+        // create_simple_reward_token doesn't set up Token-2022 mints.
+        let beneficiary = Keypair::new();
+        env.svm.airdrop(&beneficiary.pubkey(), 10_000_000_000).unwrap();
 
-        let user_balance_before = env.svm.get_balance(&user.pubkey()).unwrap();
+        let beneficiary_balance_before = env.svm.get_balance(&beneficiary.pubkey()).unwrap();
 
-        let claim_disc = anchor_discriminator("claim_reward");
+        let claim_disc = anchor_discriminator("admin_claim_reward");
         let claim_accounts = vec![
-            AccountMeta::new(user.pubkey(), true),
+            AccountMeta::new(env.manager.pubkey(), true),
             AccountMeta::new_readonly(env.config_pda, false),
             AccountMeta::new(reward_token_pda, false),
             AccountMeta::new(env.treasury_pda, false),
+            AccountMeta::new(beneficiary.pubkey(), false), // beneficiary
             AccountMeta::new_readonly(spl_token_program_id(), false),
             AccountMeta::new_readonly(system_program::ID, false),
-            // SOL rewards: no remaining_accounts needed (user is recipient AccountInfo)
+            // SOL rewards: no remaining_accounts needed
         ];
         let ix = Instruction::new_with_bytes(program_id(), &claim_disc, claim_accounts);
         let blockhash = env.svm.latest_blockhash();
         let tx = Transaction::new_signed_with_payer(
             &[ix],
-            Some(&user.pubkey()),
-            &[&user],
+            Some(&env.manager.pubkey()),
+            &[&env.manager],
             blockhash,
         );
         let result = env.svm.send_transaction(tx);
         assert!(
             result.is_ok(),
-            "Claim SOL reward should work: {:?}",
+            "Admin claim SOL reward should work: {:?}",
             result.err()
         );
 
-        // Verify user received SOL
-        let user_balance_after = env.svm.get_balance(&user.pubkey()).unwrap();
-        // User should have more SOL (reward minus tx fee)
-        // The reward is 1_000_000 lamports, tx fee is typically 5000
+        // Verify beneficiary received SOL
+        let beneficiary_balance_after = env.svm.get_balance(&beneficiary.pubkey()).unwrap();
+        // Beneficiary should have more SOL (reward amount)
+        // The reward is 1_000_000 lamports
         assert!(
-            user_balance_after > user_balance_before - 10_000, // allow for tx fee
-            "User should have received SOL reward. Before: {}, After: {}",
-            user_balance_before,
-            user_balance_after,
+            beneficiary_balance_after > beneficiary_balance_before,
+            "Beneficiary should have received SOL reward. Before: {}, After: {}",
+            beneficiary_balance_before,
+            beneficiary_balance_after,
         );
 
         // Verify treasury lost the reward amount

@@ -209,16 +209,26 @@ pub fn create_access_token_mint_handler(ctx: Context<CreateAccessTokenMint>) -> 
 /// Maps from AccessToken.sol: adminMintId
 ///
 /// The config PDA is the mint authority, so we sign with its seeds.
+/// Supply is tracked: new_supply = current_supply + amount must not exceed max_supply.
 pub fn mint_access_token_handler(
     ctx: Context<MintAccessToken>,
     amount: u64,
 ) -> Result<()> {
     require!(amount > 0, SummonRewardsError::InvalidAmount);
 
-    // Supply tracking is handled by admin_mint / mint_with_signature.
-    // This instruction only performs the Token-2022 CPI mint.
+    // ── Supply check ─────────────────────────────────────────────────
+    let state = &mut ctx.accounts.reward_token_state;
+    let new_supply = state
+        .current_supply
+        .checked_add(amount)
+        .ok_or(SummonRewardsError::ArithmeticOverflow)?;
+    require!(
+        new_supply <= state.max_supply,
+        SummonRewardsError::ExceedMaxSupply
+    );
+    state.current_supply = new_supply;
 
-    // CPI: MintTo via Token-2022
+    // ── CPI: MintTo via Token-2022 ───────────────────────────────────
     // Config PDA is the mint authority
     let config_bump = ctx.accounts.config.bump;
     let config_signer_seeds: &[&[&[u8]]] = &[&[b"config", &[config_bump]]];

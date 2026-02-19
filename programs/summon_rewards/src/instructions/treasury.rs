@@ -298,27 +298,31 @@ pub fn remove_token_from_whitelist_handler<'info>(
 
     let reward_type = ctx.accounts.token_whitelist.tokens[pos].reward_type.clone();
 
-    // For SPL tokens, verify no active reservations exist
+    // For SPL tokens, reservation check is MANDATORY to prevent removing
+    // tokens that still have active reservations.
     if reward_type == RewardType::SplToken {
         let remaining = ctx.remaining_accounts;
-        if !remaining.is_empty() {
-            let config_key = ctx.accounts.config.key();
-            let reservation_ai = &remaining[0];
+        require!(!remaining.is_empty(), SummonRewardsError::InvalidInput);
 
-            // Verify PDA seeds
-            let (expected_pda, _) = Pubkey::find_program_address(
-                &[b"reserve", config_key.as_ref(), mint.as_ref()],
-                ctx.program_id,
-            );
-            if reservation_ai.key() == expected_pda {
-                let reservation: Account<TokenReservation> =
-                    Account::try_from(reservation_ai)?;
-                require!(
-                    reservation.reserved_amount == 0,
-                    SummonRewardsError::TokenHasReserves
-                );
-            }
-        }
+        let config_key = ctx.accounts.config.key();
+        let reservation_ai = &remaining[0];
+
+        // Verify PDA seeds
+        let (expected_pda, _) = Pubkey::find_program_address(
+            &[b"reserve", config_key.as_ref(), mint.as_ref()],
+            ctx.program_id,
+        );
+        require!(
+            reservation_ai.key() == expected_pda,
+            SummonRewardsError::InvalidInput
+        );
+
+        let reservation: Account<TokenReservation> =
+            Account::try_from(reservation_ai)?;
+        require!(
+            reservation.reserved_amount == 0,
+            SummonRewardsError::TokenHasReserves
+        );
     }
 
     // Now take mutable borrow for removal

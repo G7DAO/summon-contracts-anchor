@@ -246,7 +246,7 @@ pub fn create_reward_token_handler<'info>(
                 // For each NFT mint in nft_mints, need an NftReservation PDA
                 for nft_mint in reward.nft_mints.iter() {
                     require!(
-                        remaining_idx + 1 <= remaining.len(),
+                        remaining_idx < remaining.len(),
                         SummonRewardsError::InvalidInput
                     );
 
@@ -361,6 +361,20 @@ pub fn increase_reward_supply_handler<'info>(
     require!(additional_supply > 0, SummonRewardsError::InvalidAmount);
 
     let state = &mut ctx.accounts.reward_token_state;
+
+    // Block supply increase for reward tokens that include NFT rewards.
+    // NFTs require individual mint addresses to be provided upfront; increasing
+    // max_supply without new NFT mints would create an inconsistent state where
+    // claims could fail for the extra supply.
+    let has_nft_rewards = state
+        .rewards
+        .iter()
+        .any(|r| matches!(r.reward_type, RewardType::Nft));
+    require!(
+        !has_nft_rewards,
+        SummonRewardsError::NftSupplyIncreaseNotSupported
+    );
+
     let old_supply = state.max_supply;
     let new_supply = old_supply
         .checked_add(additional_supply)

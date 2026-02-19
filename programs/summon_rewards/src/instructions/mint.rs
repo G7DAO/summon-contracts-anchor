@@ -7,8 +7,8 @@ use crate::events::{Minted, UserNonceUsed};
 use crate::state::{RewardsConfig, RewardTokenState, UserNonce, WhitelistSigners};
 
 /// Accounts for `admin_mint`.
-/// Mints access tokens to a recipient. Use `mint_access_token` for
-/// the actual Token-2022 mint CPI after this instruction validates supply.
+/// Validates permissions and emit events. Supply tracking
+/// is handled by `mint_access_token`.
 #[derive(Accounts)]
 pub struct AdminMint<'info> {
     #[account(mut)]
@@ -23,7 +23,6 @@ pub struct AdminMint<'info> {
     pub config: Account<'info, RewardsConfig>,
 
     #[account(
-        mut,
         seeds = [b"reward_token", config.key().as_ref(), &reward_token_state.token_id.to_le_bytes()],
         bump = reward_token_state.bump,
     )]
@@ -34,7 +33,7 @@ pub struct AdminMint<'info> {
 
 /// Accounts for `mint_with_signature`.
 /// User-initiated mint with Ed25519 signature verification.
-///
+/// Supply tracking is handled by `mint_access_token`.
 /// The transaction must include an Ed25519 native program instruction
 /// preceding this instruction. The handler verifies:
 /// 1. An Ed25519 instruction exists in the transaction
@@ -54,7 +53,6 @@ pub struct MintWithSignature<'info> {
     pub config: Account<'info, RewardsConfig>,
 
     #[account(
-        mut,
         seeds = [b"reward_token", config.key().as_ref(), &reward_token_state.token_id.to_le_bytes()],
         bump = reward_token_state.bump,
     )]
@@ -89,8 +87,8 @@ pub struct MintWithSignature<'info> {
 
 /// Admin mint access tokens to a recipient.
 /// Maps from Rewards.sol: adminMintById / _mintAndClaimRewardToken
-///
-/// Validates supply limits, checks mint pause status, increments supply.
+/// Validates permissions and emits events. Supply tracking is handled
+/// by `mint_access_token`.
 /// After this instruction, call `mint_access_token` to actually create the tokens.
 pub fn admin_mint_handler(
     ctx: Context<AdminMint>,
@@ -99,23 +97,13 @@ pub fn admin_mint_handler(
 ) -> Result<()> {
     require!(amount > 0, SummonRewardsError::InvalidAmount);
 
-    let state = &mut ctx.accounts.reward_token_state;
+    let state = &ctx.accounts.reward_token_state;
 
     // Check mint is not paused for this token
     require!(!state.is_mint_paused, SummonRewardsError::MintPaused);
 
-    // Check supply limits
-    let new_supply = state
-        .current_supply
-        .checked_add(amount)
-        .ok_or(SummonRewardsError::ArithmeticOverflow)?;
-    require!(
-        new_supply <= state.max_supply,
-        SummonRewardsError::ExceedMaxSupply
-    );
-
-    // Increment current supply
-    state.current_supply = new_supply;
+    // Supply tracking is handled by mint_access_token.
+    // This instruction validates permissions and emits the Minted event.
 
     emit!(Minted {
         to: ctx.accounts.minter.key(),
@@ -144,20 +132,13 @@ pub fn mint_with_signature_handler(
     _is_soulbound: bool,
     _is_claim_reward: bool,
 ) -> Result<()> {
-    let state = &mut ctx.accounts.reward_token_state;
+    let state = &ctx.accounts.reward_token_state;
 
     // Check mint is not paused for this token
     require!(!state.is_mint_paused, SummonRewardsError::MintPaused);
 
-    // Check supply limits (mint 1 at a time, like Solidity)
-    let new_supply = state
-        .current_supply
-        .checked_add(1)
-        .ok_or(SummonRewardsError::ArithmeticOverflow)?;
-    require!(
-        new_supply <= state.max_supply,
-        SummonRewardsError::ExceedMaxSupply
-    );
+    // Supply tracking is handled by mint_access_token.
+    // This instruction validates the signature and marks the nonce as used.
 
     // ─── Ed25519 Signature Verification ──────────────────────────────
 
@@ -180,8 +161,7 @@ pub fn mint_with_signature_handler(
         .accounts
         .whitelist_signers
         .signers
-        .iter()
-        .any(|s| *s == signer_pubkey);
+        .contains(&signer_pubkey);
     require!(is_whitelisted, SummonRewardsError::SignerNotWhitelisted);
 
     // ─── State Updates ───────────────────────────────────────────────
@@ -190,9 +170,6 @@ pub fn mint_with_signature_handler(
     let user_nonce = &mut ctx.accounts.user_nonce;
     user_nonce.used = true;
     user_nonce.bump = ctx.bumps.user_nonce;
-
-    // Increment current supply
-    state.current_supply = new_supply;
 
     emit!(UserNonceUsed {
         user: user_key,
@@ -223,7 +200,7 @@ pub fn mint_with_signature_handler(
 ///     - Byte 8-9: message_data_offset (u16 LE)
 ///     - Byte 10-11: message_data_size (u16 LE)
 ///     - Byte 12-13: message_instruction_index (u16 LE)
-///   Then inline data: signature(64) + pubkey(32) + message(variable)
+///       Then inline data: signature(64) + pubkey(32) + message(variable)
 fn verify_ed25519_signature(
     instructions_sysvar: &AccountInfo,
     expected_message: &[u8],
