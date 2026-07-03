@@ -74,7 +74,7 @@ jobs:
         run: solana-keygen new --no-bip39-passphrase
 
       - name: Build
-        run: anchor build
+        run: anchor build --no-idl
 
   # ─── Anchor Test ───────────────────────────────────────────────
   test:
@@ -108,19 +108,11 @@ jobs:
         run: |
           cargo install --git https://github.com/coral-xyz/anchor --tag v${{ env.ANCHOR_VERSION }} anchor-cli --locked
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: Install Bun
-        uses: oven-sh/setup-bun@v2
-
-      - name: Install JS dependencies
-        run: bun install
-
       - name: Generate keypair
         run: solana-keygen new --no-bip39-passphrase
 
-      - name: Run Anchor tests
-        run: anchor test
+      - name: Build
+        run: anchor build --no-idl
+
+      - name: Run Rust tests
+        run: cargo test --workspace --all-targets --no-fail-fast

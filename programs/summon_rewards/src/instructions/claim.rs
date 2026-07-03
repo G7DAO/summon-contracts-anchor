@@ -218,7 +218,7 @@ struct DistributeCtx<'a, 'info> {
 
 /// Internal: distribute all rewards for a single claim.
 /// Maps from Rewards.sol: _distributeReward
-fn distribute_rewards<'info>(ctx: DistributeCtx<'_, 'info>) -> Result<()> {
+fn distribute_rewards(ctx: DistributeCtx<'_, '_>) -> Result<()> {
     let signer_seeds: &[&[&[u8]]] = &[&[b"treasury", ctx.config_key.as_ref(), &[ctx.treasury_bump]]];
 
     let mut remaining_idx = 0;
