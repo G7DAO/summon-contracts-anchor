@@ -83,10 +83,10 @@ jobs:
           cargo +${{ env.ANCHOR_INSTALL_TOOLCHAIN }} install --git https://github.com/coral-xyz/anchor --tag v${{ env.ANCHOR_VERSION }} anchor-cli --locked
 
       - name: Generate keypair
-        run: solana-keygen new --no-bip39-passphrase
+        run: solana-keygen new --no-bip39-passphrase --silent
 
       - name: Build
-        run: anchor build --no-idl
+        run: RUSTUP_TOOLCHAIN=${{ env.RUST_TOOLCHAIN }} anchor build --no-idl
 
   # ─── Anchor Test ───────────────────────────────────────────────
   test:
@@ -127,10 +127,10 @@ jobs:
           cargo +${{ env.ANCHOR_INSTALL_TOOLCHAIN }} install --git https://github.com/coral-xyz/anchor --tag v${{ env.ANCHOR_VERSION }} anchor-cli --locked
 
       - name: Generate keypair
-        run: solana-keygen new --no-bip39-passphrase
+        run: solana-keygen new --no-bip39-passphrase --silent
 
       - name: Build
-        run: anchor build --no-idl
+        run: RUSTUP_TOOLCHAIN=${{ env.RUST_TOOLCHAIN }} anchor build --no-idl
 
       - name: Run Rust tests
-        run: cargo test --workspace --all-targets --no-fail-fast
+        run: cargo +${{ env.RUST_TOOLCHAIN }} test --workspace --all-targets --no-fail-fast
